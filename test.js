@@ -20,12 +20,12 @@
   const questions = [
     {
       id: 1,
-      text: "实验课上设备读数异常，你会先：",
-      options: [
-        { text: "反复调试接线，边试边排查（这个放这里~）", scores: { M: 2, D: 1 } },
-        { text: "对照手册逐条核对参数配置", scores: { D: 2, P: 1 } },
-        { text: "回想这和课上讲的哪个模型有关", scores: { P: 2, S: 1 } },
-        { text: "看看其他同学有没有同样问题", scores: { V: 2, M: 1 } }
+      text: "朋友心情不好来找你聊天，你通常会：",
+    options: [
+      { text: "陪对方做点具体的事，比如散步、吃饭、收拾东西", scores: { M: 2, D: 1 } },
+      { text: "帮对方把问题列出来，分析哪些能解决、哪些先放下", scores: { P: 2, S: 1 } },
+      { text: "一起想清楚情绪背后的原因和真正困扰他的点", scores: { D: 2, P: 1 } },
+      { text: "先认真倾听和共情，让对方感觉被理解和支持", scores: { V: 2, M: 1 } }
       ]
     },
     {
@@ -100,14 +100,14 @@
     },
     {
       id: 9,
-      text: "小组作业有人进度落后，你会：",
+      text: "如果你要布置自己的书桌，你最在意：",
       options: [
-        { text: "直接上手和他进行分工", scores: { M: 2, V: 1 } },
-        { text: "指出他该做什么，宽限一下DDL", scores: { D: 2, S: 1 } },
-        { text: "私下问问他是不是遇到什么困难", scores: { V: 2, S: 1 } },
-        { text: "重新分配分工，让大家各展所长", scores: { S: 2, D: 1 } }
+        { text: "东西拿起来顺不顺手，工具和物品是否方便使用", scores: { M: 2, V: 1 } },
+        { text: "分类、标签、收纳顺序是否清晰，能不能快速找到东西", scores: { D: 2, S: 1 } },
+        { text: "整体布局背后的逻辑，怎样摆放最符合自己的思考习惯", scores: { S: 2, D: 1 } },
+        { text: "看起来是否温暖舒服，也能让来访的人感到放松", scores: { V: 2, S: 1 } }
       ]
-    },
+   },
     {
       id: 10,
       text: "想了解一个从没接触过教材上的概念，你更倾向于：",
@@ -154,7 +154,7 @@
       text: "未来理想的工作状态是：",
       options: [
         { text: "在堆满了机械臂、3D 打印机的实验室中亲手调试设备", scores: { M: 2, S: 1 } },
-        { text: "在极端清洁的超净实验室中进行数据处理和理论推导", scores: { P: 2, D: 1 } },
+        { text: "在安静的研究所中进行理论研究、数据分析和模型推导", scores: { P: 2, D: 1 } },
         { text: "在布满多屏显示器的系统调度中心进行数据监测", scores: { S: 2, P: 1 } },
         { text: "在国家级工程的一线奋斗", scores: { V: 2, P: 1 } }
       ]
@@ -1221,7 +1221,7 @@
         ctx.fillText("WYTI 未央专业选择测试", 140, 220);
         ctx.fillStyle = "#475569";
         ctx.font = "32px Inter, sans-serif";
-        ctx.fillText("你的结局卡已生成", 140, 278);
+        ctx.fillText("你的支线剧情卡已生成", 140, 278);
 
         ctx.fillStyle = "#7dd3fc";
         ctx.font = "bold 64px Inter, sans-serif";
@@ -1353,8 +1353,8 @@
       const file = new File([blob], filename, { type: "image/png" });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
-          title: "WYTI 专业结局卡",
-          text: `我的结局是：${lastResultData.resultName}`,
+          title: "WYTI 专业支线剧情卡",
+          text: `我的支线剧情是：${lastResultData.resultName}`,
           files: [file]
         });
       } else {
