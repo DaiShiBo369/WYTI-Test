@@ -1221,7 +1221,7 @@
         ctx.fillText("WYTI 未央专业选择测试", 140, 220);
         ctx.fillStyle = "#475569";
         ctx.font = "32px Inter, sans-serif";
-        ctx.fillText("你的结局卡已生成", 140, 278);
+        ctx.fillText("你的支线剧情卡已生成", 140, 278);
 
         ctx.fillStyle = "#7dd3fc";
         ctx.font = "bold 64px Inter, sans-serif";
