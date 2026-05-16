@@ -417,6 +417,7 @@
   const SHARE_IMAGE_CONFIG = {
     qrEnabled: true,
     qrTargetUrl: "https://wyti.top",
+    qrDarkHex: "#66CCFF",
     qrApiBases: [
       "https://api.qrserver.com/v1/create-qr-code",
       "https://quickchart.io/qr"
@@ -838,8 +839,8 @@
     const leadPct = Math.round((lead.value / _maxVal) * 100);
     const supportPct = Math.round((support.value / _maxVal) * 100);
     const stageTitle = result.resultType === "cross"
-      ? `🎬 双线结局已解锁：${result.resultName}`
-      : `🎬 主线结局已解锁：${result.resultName}`;
+      ? `🎬 双线剧情已解锁：${result.resultName}`
+      : `🎬 主线剧情已解锁：${result.resultName}`;
     const roleMap = {
       M: "动手开荒型选手",
       D: "逻辑分析型选手",
@@ -1114,9 +1115,11 @@
     for (const baseUrl of apiBases) {
       const apiBase = (baseUrl || "").replace(/\/+$/, "");
       if (!apiBase) continue;
+      const qrDarkHex = String(SHARE_IMAGE_CONFIG.qrDarkHex || "#66CCFF").replace("#", "");
+      const qrDarkRgb = `${parseInt(qrDarkHex.slice(0, 2), 16) || 102}-${parseInt(qrDarkHex.slice(2, 4), 16) || 204}-${parseInt(qrDarkHex.slice(4, 6), 16) || 255}`;
       const qrUrl = apiBase.includes("quickchart.io")
-        ? `${apiBase}?text=${encodeURIComponent(targetUrl)}&size=${size}&margin=2&format=png`
-        : `${apiBase}/?size=${size}x${size}&format=png&margin=2&data=${encodeURIComponent(targetUrl)}`;
+        ? `${apiBase}?text=${encodeURIComponent(targetUrl)}&size=${size}&margin=2&format=png&dark=${encodeURIComponent(qrDarkHex)}&light=FFFFFF`
+        : `${apiBase}/?size=${size}x${size}&format=png&margin=2&color=${encodeURIComponent(qrDarkRgb)}&bgcolor=255-255-255&data=${encodeURIComponent(targetUrl)}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
       try {
@@ -1160,7 +1163,20 @@
     ctx.quadraticCurveTo(x, y, x + radius, y);
     ctx.closePath();
     ctx.clip();
-    ctx.drawImage(img, x, y, size, size);
+
+    // 背景底色，避免 contain 留白区域透明时观感突兀
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x, y, size, size);
+
+    // 等比完整显示（contain）避免图片被截掉
+    const imgW = img.naturalWidth || img.width || size;
+    const imgH = img.naturalHeight || img.height || size;
+    const scale = Math.min(size / imgW, size / imgH);
+    const drawW = imgW * scale;
+    const drawH = imgH * scale;
+    const drawX = x + (size - drawW) / 2;
+    const drawY = y + (size - drawH) / 2;
+    ctx.drawImage(img, drawX, drawY, drawW, drawH);
     ctx.restore();
   }
 
@@ -1178,6 +1194,93 @@
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
   }
+
+  function drawShareRadarChart(ctx, dimensions, centerX, centerY, radius) {
+    if (!Array.isArray(dimensions) || dimensions.length === 0) return;
+    const total = dimensions.length;
+    const levels = 4;
+    const angleOffset = -Math.PI / 2;
+
+    const getPoint = (index, ratio) => {
+      const angle = angleOffset + (Math.PI * 2 * index) / total;
+      const r = radius * ratio;
+      return { x: centerX + Math.cos(angle) * r, y: centerY + Math.sin(angle) * r };
+    };
+
+    ctx.save();
+
+    // Grid rings
+    ctx.strokeStyle = "rgba(100,116,139,0.24)";
+    ctx.lineWidth = 1;
+    for (let level = 1; level <= levels; level++) {
+      const ratio = level / levels;
+      ctx.beginPath();
+      for (let i = 0; i < total; i++) {
+        const p = getPoint(i, ratio);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    // Axis lines
+    for (let i = 0; i < total; i++) {
+      const p = getPoint(i, 1);
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+
+    // Data polygon
+    ctx.beginPath();
+    for (let i = 0; i < total; i++) {
+      const value = Number.isFinite(Number(dimensions[i].value)) ? Number(dimensions[i].value) : 0;
+      const ratio = Math.max(0, Math.min(1, value / 100));
+      const p = getPoint(i, ratio);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = "rgba(102, 204, 255, 0.24)";
+    ctx.strokeStyle = "#38bdf8";
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+
+    // Vertex dots
+    for (let i = 0; i < total; i++) {
+      const value = Number.isFinite(Number(dimensions[i].value)) ? Number(dimensions[i].value) : 0;
+      const ratio = Math.max(0, Math.min(1, value / 100));
+      const p = getPoint(i, ratio);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "#0ea5e9";
+      ctx.fill();
+    }
+
+    // Labels
+    ctx.fillStyle = "#334155";
+    ctx.font = "600 20px Inter, 'Microsoft YaHei', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (let i = 0; i < total; i++) {
+      const p = getPoint(i, 1.18);
+      const label = dimensions[i].label || dimensions[i].key || "";
+      ctx.fillText(label, p.x, p.y);
+    }
+
+    ctx.restore();
+  }
+
+  const SHARE_RADAR_SHORT_LABELS = {
+    M: "M 实践",
+    D: "D 编程",
+    P: "P 理论",
+    S: "S 系统",
+    V: "V 价值"
+  };
 
   async function buildShareImageBlob(result) {
     const mascotImage = await loadImageSafe("images/mascot.png") || await loadImageSafe("images/mascot.svg");
@@ -1211,16 +1314,22 @@
         ctx.fillRect(80, 90, canvas.width - 160, canvas.height - 180);
 
         const dimOrder = ["M", "D", "P", "S", "V"];
+        const maxScore = Math.max(...dimOrder.map(key => Number(result.scores[key]) || 0), 1);
         const topDims = dimOrder
           .map(key => {
             const rawValue = Number(result.scores[key]);
-            const safeValue = Number.isFinite(rawValue)
-              ? Math.max(0, Math.min(100, Math.round(rawValue)))
-              : 0;
-            return { key, value: safeValue };
+            const safeRaw = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 0;
+            // 与结果页口径一致：相对最强维度 = 100%
+            const relativeValue = Math.round((safeRaw / maxScore) * 100);
+            return { key, value: Math.max(0, Math.min(100, relativeValue)) };
           })
           .sort((a, b) => b.value - a.value)
           .slice(0, 2);
+        const radarDims = dimOrder.map(key => ({
+          key,
+          label: SHARE_RADAR_SHORT_LABELS[key] || key,
+          value: Math.max(0, Math.min(100, Math.round(((Number(result.scores[key]) || 0) / maxScore) * 100)))
+        }));
 
         ctx.fillStyle = "#0f172a";
         ctx.font = "bold 54px Inter, sans-serif";
@@ -1233,9 +1342,9 @@
         ctx.font = "bold 64px Inter, sans-serif";
         drawMultilineText(ctx, result.resultName, 140, 410, 760, 78, 2);
 
-        const badgeSize = 140;
-        const badgeX = 820;
-        const badgeY = 260;
+        const badgeSize = 200;
+        const badgeX = 560;
+        const badgeY = 240;
         if (result.resultType === "cross") {
           ctx.save();
           ctx.translate(badgeX + 20, badgeY + 10);
@@ -1269,6 +1378,7 @@
         ctx.fillStyle = "#0ea5e9";
         ctx.font = "bold 34px Inter, sans-serif";
         ctx.fillText("Top 能力标签", 140, 650);
+        drawShareRadarChart(ctx, radarDims, 740, 750, 150);
 
         topDims.forEach((dim, idx) => {
           const y = 730 + idx * 100;
@@ -1279,7 +1389,7 @@
           ctx.fillStyle = "#6366f1";
           // 数值统一使用系统字体回退，降低 Canvas 文本渲染异常概率
           ctx.font = "bold 30px Arial, 'Microsoft YaHei', sans-serif";
-          ctx.fillText(`${dim.value}/100`, 760, y);
+          ctx.fillText(`${dim.value}/100`, 400, y);
         });
 
         ctx.fillStyle = "#334155";
@@ -1287,11 +1397,11 @@
         drawMultilineText(ctx, `剧情一句话：${result.resultDesc}`, 140, 980, 800, 42, 4);
 
         if (mascotImage) {
-          drawRoundedImage(ctx, mascotImage, 820, 1080, 140, 24);
+          drawRoundedImage(ctx, mascotImage, 560, 1000, 200, 24);
         } else {
-          const mx = 820;
-          const my = 1080;
-          const size = 140;
+          const mx = 560;
+          const my = 1000;
+          const size = 200;
           const mGrad = ctx.createLinearGradient(mx, my, mx + size, my + size);
           mGrad.addColorStop(0, "#e0f2fe");
           mGrad.addColorStop(1, "#bae6fd");
@@ -1360,8 +1470,8 @@
       const file = new File([blob], filename, { type: "image/png" });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
-          title: "WYTI 专业结局卡",
-          text: `我的结局是：${lastResultData.resultName}`,
+          title: "WYTI 专业支线任务卡",
+          text: `我的支线任务是：${lastResultData.resultName}`,
           files: [file]
         });
       } else {
@@ -1383,6 +1493,43 @@
         shareButton.disabled = false;
         shareButton.innerHTML = "<i class=\"fas fa-image mr-2\"></i>一键生成分享图";
       }
+    }
+  };
+
+  function downloadBlobAsFile(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  // 仅用于调试分享图样式：不依赖答题流程，直接生成图片下载
+  window.generateShareImageTest = async function(overrides = {}) {
+    const mockResult = {
+      resultType: "single",
+      resultName: "软件工程",
+      resultDesc: "你具备严谨的逻辑思维和抽象分析能力，善于用系统化方法解决复杂问题。",
+      matchedDepts: ["软件工程"],
+      scores: { M: 62, D: 78, P: 74, S: 86, V: 58 }
+    };
+    const testResult = {
+      ...mockResult,
+      ...overrides,
+      scores: { ...mockResult.scores, ...(overrides.scores || {}) }
+    };
+
+    try {
+      const blob = await buildShareImageBlob(testResult);
+      const filename = `WYTI-test-${Date.now()}.png`;
+      downloadBlobAsFile(blob, filename);
+      return { ok: true, filename, result: testResult };
+    } catch (err) {
+      console.error("[WYTI Test] 分享图生成失败", err);
+      return { ok: false, error: String(err) };
     }
   };
 
