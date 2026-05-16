@@ -403,6 +403,8 @@
   const CROSS_PROB_MAX = 0.85; // 最大交叉概率
   const MATCH_NOISE_STD = 0.025; // 匹配度扰动标准差（打破系统性偏差）
   const RADAR_MAX = 100;
+  // 人工下调历史雷达显示强度，避免视觉上“压过”当前结果
+  const HISTORICAL_RADAR_DISPLAY_FACTOR = 0.88;
   const RESULT_UPLOAD_CONFIG = {
     enabled: true,
     supabaseUrl: "https://ftvwvfbufgccufceewnz.supabase.co",
@@ -703,6 +705,49 @@
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  function normalizeScoresForRadar(input) {
+    const dims = ["M", "D", "P", "S", "V"];
+    const safe = {};
+    let total = 0;
+    dims.forEach(dim => {
+      const v = Number(input?.[dim]);
+      const safeVal = Number.isFinite(v) && v > 0 ? v : 0;
+      safe[dim] = safeVal;
+      total += safeVal;
+    });
+    if (total <= 0) {
+      return { M: 0, D: 0, P: 0, S: 0, V: 0 };
+    }
+    const normalized = {};
+    dims.forEach(dim => {
+      normalized[dim] = (safe[dim] / total) * 100;
+    });
+    return normalized;
+  }
+
+  function scaleScoresToRelativePercent(baseScores, dimOrder, labelResolver, scaleMax) {
+    const maxVal = Number.isFinite(Number(scaleMax)) && Number(scaleMax) > 0
+      ? Number(scaleMax)
+      : Math.max(...dimOrder.map(dim => Number(baseScores?.[dim]) || 0), 1);
+    return dimOrder.map(dim => {
+      const raw = Number(baseScores?.[dim]) || 0;
+      const pct = Math.round((raw / maxVal) * 100);
+      return {
+        key: dim,
+        name: labelResolver(dim),
+        value: Math.max(0, Math.min(100, pct))
+      };
+    });
+  }
+
+  function applyHistoricalDisplayFactorToDims(dimensions, factor) {
+    const safeFactor = Number.isFinite(Number(factor)) ? Number(factor) : 1;
+    return dimensions.map(item => ({
+      ...item,
+      value: Math.max(0, Math.min(100, Math.round((Number(item.value) || 0) * safeFactor)))
+    }));
   }
 
   async function refreshVisitorCounter(afterSaved) {
@@ -1061,12 +1106,44 @@
       });
     }, 100);
 
-    // 五维雷达图（使用相对百分比）
-    const _maxScore = Math.max(...dimOrder.map(dim => result.scores[dim]), 1);
-    createRadarChart(dimOrder.map(dim => ({
-      name: DIMENSION_LABELS[dim].name,
-      value: Math.round((result.scores[dim] / _maxScore) * 100)
-    })));
+    // 五维雷达图（支持叠加历史回答均值）
+    const currentRadarBase = normalizeScoresForRadar(result.scores || {});
+    const currentRadarDims = scaleScoresToRelativePercent(
+      currentRadarBase,
+      dimOrder,
+      dim => DIMENSION_LABELS[dim].name
+    );
+    createRadarChart(currentRadarDims);
+    Promise.resolve(fetchAverageScoresFromSupabase())
+      .then(historicalAverageScores => {
+        if (lastResultData !== result) return;
+        if (!historicalAverageScores) return;
+        const historicalRadarBase = normalizeScoresForRadar(historicalAverageScores);
+        const compareScaleMax = Math.max(
+          ...dimOrder.map(dim => Number(currentRadarBase[dim]) || 0),
+          ...dimOrder.map(dim => Number(historicalRadarBase[dim]) || 0),
+          1
+        );
+        const currentCompareDims = scaleScoresToRelativePercent(
+          currentRadarBase,
+          dimOrder,
+          dim => DIMENSION_LABELS[dim].name,
+          compareScaleMax
+        );
+        const historicalCompareDims = applyHistoricalDisplayFactorToDims(
+          scaleScoresToRelativePercent(
+            historicalRadarBase,
+            dimOrder,
+            dim => DIMENSION_LABELS[dim].name,
+            compareScaleMax
+          ),
+          HISTORICAL_RADAR_DISPLAY_FACTOR
+        );
+        createRadarChart(currentCompareDims, historicalCompareDims);
+      })
+      .catch(() => {
+        // ignore historical overlay failure
+      });
 
     // Top 5 匹配度排行
     const topContainer = document.getElementById("top-matches-container");
@@ -1139,24 +1216,39 @@
     });
   };
 
-  function createRadarChart(dimensions) {
+  function createRadarChart(dimensions, historicalDimensions) {
     const ctx = document.getElementById("radarChart").getContext("2d");
     if (window.radarChartInstance) { window.radarChartInstance.destroy(); }
+    const datasets = [{
+      label: "你的能力分布",
+      data: dimensions.map(d => d.value),
+      backgroundColor: "rgba(56, 189, 248, 0.2)",
+      borderColor: "rgba(56, 189, 248, 1)",
+      borderWidth: 2,
+      pointBackgroundColor: "rgba(56, 189, 248, 1)",
+      pointBorderColor: "#fff",
+      pointHoverBackgroundColor: "#fff",
+      pointHoverBorderColor: "rgba(56, 189, 248, 1)"
+    }];
+    if (Array.isArray(historicalDimensions) && historicalDimensions.length === dimensions.length) {
+      datasets.push({
+        label: "历史回答均值",
+        data: historicalDimensions.map(d => d.value),
+        backgroundColor: "rgba(249, 115, 22, 0.08)",
+        borderColor: "#f97316",
+        borderWidth: 2,
+        borderDash: [8, 6],
+        pointBackgroundColor: "#f97316",
+        pointBorderColor: "#fff",
+        pointHoverBackgroundColor: "#fff",
+        pointHoverBorderColor: "#f97316"
+      });
+    }
     window.radarChartInstance = new Chart(ctx, {
       type: "radar",
       data: {
         labels: dimensions.map(d => d.name),
-        datasets: [{
-          label: "你的能力分布",
-          data: dimensions.map(d => d.value),
-          backgroundColor: "rgba(56, 189, 248, 0.2)",
-          borderColor: "rgba(56, 189, 248, 1)",
-          borderWidth: 2,
-          pointBackgroundColor: "rgba(56, 189, 248, 1)",
-          pointBorderColor: "#fff",
-          pointHoverBackgroundColor: "#fff",
-          pointHoverBorderColor: "rgba(56, 189, 248, 1)"
-        }]
+        datasets
       },
       options: {
         responsive: true, maintainAspectRatio: true,
@@ -1372,11 +1464,9 @@
         else ctx.lineTo(p.x, p.y);
       }
       ctx.closePath();
-      ctx.fillStyle = "rgba(148, 163, 184, 0.16)";
-      ctx.strokeStyle = "#64748b";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 6]);
-      ctx.fill();
+      ctx.strokeStyle = "#f97316";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 6]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -1412,16 +1502,19 @@
     ctx.font = "500 16px Inter, 'Microsoft YaHei', sans-serif";
     ctx.fillText("当前结果", centerX - radius + 24, centerY + radius + 30);
     if (Array.isArray(historicalDimensions) && historicalDimensions.length === total) {
-      ctx.strokeStyle = "#64748b";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 6]);
+      ctx.strokeStyle = "#f97316";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 6]);
       ctx.beginPath();
       ctx.moveTo(centerX - radius + 130, centerY + radius + 30);
       ctx.lineTo(centerX - radius + 152, centerY + radius + 30);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = "#475569";
-      ctx.fillText("历史均值", centerX - radius + 160, centerY + radius + 30);
+      ctx.fillText("历史回答均值", centerX - radius + 160, centerY + radius + 30);
+    } else {
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillText("历史回答均值未就绪", centerX - radius + 130, centerY + radius + 30);
     }
 
     ctx.restore();
@@ -1448,6 +1541,9 @@
     const shareLandingUrl = normalizeShareTargetUrl(SHARE_IMAGE_CONFIG.qrTargetUrl);
     const qrImage = await loadShareQrImage(shareLandingUrl, 160);
     const historicalAverageScores = await fetchAverageScoresFromSupabase();
+    if (!historicalAverageScores) {
+      console.warn("[WYTI Share] 历史均值不可用：请检查 average RPC 返回或缓存表是否有数据");
+    }
 
     return new Promise((resolve, reject) => {
       try {
@@ -1468,10 +1564,14 @@
         ctx.fillRect(80, 90, canvas.width - 160, canvas.height - 180);
 
         const dimOrder = ["M", "D", "P", "S", "V"];
-        const maxScore = Math.max(...dimOrder.map(key => Number(result.scores[key]) || 0), 1);
+        const currentRadarBase = normalizeScoresForRadar(result.scores || {});
+        const historicalRadarBase = historicalAverageScores
+          ? normalizeScoresForRadar(historicalAverageScores)
+          : null;
+        const maxScore = Math.max(...dimOrder.map(key => Number(currentRadarBase[key]) || 0), 1);
         const topDims = dimOrder
           .map(key => {
-            const rawValue = Number(result.scores[key]);
+            const rawValue = Number(currentRadarBase[key]);
             const safeRaw = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 0;
             // 与结果页口径一致：相对最强维度 = 100%
             const relativeValue = Math.round((safeRaw / maxScore) * 100);
@@ -1479,21 +1579,21 @@
           })
           .sort((a, b) => b.value - a.value)
           .slice(0, 2);
-        const historicalMax = historicalAverageScores
-          ? Math.max(...dimOrder.map(key => Number(historicalAverageScores[key]) || 0), 0)
+        const historicalMax = historicalRadarBase
+          ? Math.max(...dimOrder.map(key => Number(historicalRadarBase[key]) || 0), 0)
           : 0;
         const radarScaleMax = Math.max(maxScore, historicalMax, 1);
         const radarDims = dimOrder.map(key => ({
           key,
           label: SHARE_RADAR_SHORT_LABELS[key] || key,
-          value: Math.max(0, Math.min(100, Math.round(((Number(result.scores[key]) || 0) / radarScaleMax) * 100)))
+          value: Math.max(0, Math.min(100, Math.round(((Number(currentRadarBase[key]) || 0) / radarScaleMax) * 100)))
         }));
-        const historicalRadarDims = historicalAverageScores
-          ? dimOrder.map(key => ({
+        const historicalRadarDims = historicalRadarBase
+          ? applyHistoricalDisplayFactorToDims(dimOrder.map(key => ({
             key,
             label: SHARE_RADAR_SHORT_LABELS[key] || key,
-            value: Math.max(0, Math.min(100, Math.round(((Number(historicalAverageScores[key]) || 0) / radarScaleMax) * 100)))
-          }))
+            value: Math.max(0, Math.min(100, Math.round(((Number(historicalRadarBase[key]) || 0) / radarScaleMax) * 100)))
+          })), HISTORICAL_RADAR_DISPLAY_FACTOR)
           : null;
 
         ctx.fillStyle = "#0f172a";
@@ -1702,6 +1802,13 @@
       console.error("[WYTI Test] 分享图生成失败", err);
       return { ok: false, error: String(err) };
     }
+  };
+
+  // 调试用：手动检查 Supabase 历史均值接口是否可用
+  window.debugShareAverageScores = async function() {
+    const avg = await fetchAverageScoresFromSupabase();
+    console.log("[WYTI Debug] historical average:", avg);
+    return avg;
   };
 
   window.shareResults = function() {
