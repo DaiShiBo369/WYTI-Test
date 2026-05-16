@@ -1608,7 +1608,7 @@
         drawMultilineText(ctx, result.resultName, 140, 410, 760, 78, 2);
 
         const badgeSize = 200;
-        const badgeX = 560;
+        const badgeX = 660;
         const badgeY = 240;
         if (result.resultType === "cross") {
           const crossBadgeSize = 124;
@@ -1668,10 +1668,10 @@
         drawMultilineText(ctx, `剧情一句话：${result.resultDesc}`, 140, 980, 800, 42, 4);
 
         if (mascotImage) {
-          drawRoundedImage(ctx, mascotImage, 560, 1000, 200, 24);
+          drawRoundedImage(ctx, mascotImage, 560, 1050, 200, 24);
         } else {
           const mx = 560;
-          const my = 1080;
+          const my = 1130;
           const size = 160;
           const mGrad = ctx.createLinearGradient(mx, my, mx + size, my + size);
           mGrad.addColorStop(0, "#e0f2fe");
