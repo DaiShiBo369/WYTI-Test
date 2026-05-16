@@ -855,6 +855,9 @@
     cards[optionIndex].classList.remove("option-clicked");
     cards[optionIndex].offsetWidth;
     cards[optionIndex].classList.add("option-clicked");
+    try {
+      if (navigator.vibrate) navigator.vibrate(15);
+    } catch (_) {}
     const prevIndex = userAnswers[currentQuestionIndex];
     if (prevIndex !== null && shuffledQuestions[currentQuestionIndex].options[prevIndex]) {
       const oldScores = shuffledQuestions[currentQuestionIndex].options[prevIndex].scores;
@@ -1330,6 +1333,19 @@
     return `https://${trimmed}`;
   }
 
+  function isWeChatBrowser() {
+    return /micromessenger/i.test(navigator.userAgent || "");
+  }
+
+  function promptOpenWeChatFloatWindowPage() {
+    if (!isWeChatBrowser()) return;
+    const targetUrl = normalizeShareTargetUrl(SHARE_IMAGE_CONFIG.qrTargetUrl) || window.location.href;
+    const shouldOpen = window.confirm("分享图已生成。是否现在打开测试主页以添加微信浮窗？");
+    if (!shouldOpen) return;
+    alert("打开页面后，点击微信右上角“···”，选择“浮窗”即可。");
+    window.location.href = targetUrl;
+  }
+
   async function loadShareQrImage(targetUrl, size) {
     if (!SHARE_IMAGE_CONFIG.qrEnabled || !targetUrl) return null;
     const apiBases = Array.isArray(SHARE_IMAGE_CONFIG.qrApiBases)
@@ -1758,12 +1774,14 @@
       const blob = await buildShareImageBlob(lastResultData);
       const filename = `WYTI-${Date.now()}.png`;
       const file = new File([blob], filename, { type: "image/png" });
+      let shareCompleted = false;
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           title: "WYTI 专业支线任务卡",
           text: `我的支线任务是：${lastResultData.resultName}`,
           files: [file]
         });
+        shareCompleted = true;
       } else {
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -1774,6 +1792,10 @@
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         alert("分享图已生成并下载到本地！");
+        shareCompleted = true;
+      }
+      if (shareCompleted) {
+        promptOpenWeChatFloatWindowPage();
       }
     } catch (err) {
       console.error(err);
