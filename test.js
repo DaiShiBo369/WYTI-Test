@@ -1212,7 +1212,13 @@
 
         const dimOrder = ["M", "D", "P", "S", "V"];
         const topDims = dimOrder
-          .map(key => ({ key, value: result.scores[key] || 0 }))
+          .map(key => {
+            const rawValue = Number(result.scores[key]);
+            const safeValue = Number.isFinite(rawValue)
+              ? Math.max(0, Math.min(100, Math.round(rawValue)))
+              : 0;
+            return { key, value: safeValue };
+          })
           .sort((a, b) => b.value - a.value)
           .slice(0, 2);
 
@@ -1271,7 +1277,8 @@
           ctx.font = "600 32px Inter, sans-serif";
           ctx.fillText(`${info.icon} ${info.name}`, 140, y);
           ctx.fillStyle = "#6366f1";
-          ctx.font = "bold 30px Inter, sans-serif";
+          // 数值统一使用系统字体回退，降低 Canvas 文本渲染异常概率
+          ctx.font = "bold 30px Arial, 'Microsoft YaHei', sans-serif";
           ctx.fillText(`${dim.value}/100`, 760, y);
         });
 
