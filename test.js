@@ -1608,7 +1608,7 @@
         drawMultilineText(ctx, result.resultName, 140, 410, 760, 78, 2);
 
         const badgeSize = 200;
-        const badgeX = 660;
+        const badgeX =800
         const badgeY = 240;
         if (result.resultType === "cross") {
           const crossBadgeSize = 124;
