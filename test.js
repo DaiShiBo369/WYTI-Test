@@ -1148,35 +1148,17 @@
     // Top 5 匹配度排行
     const topContainer = document.getElementById("top-matches-container");
     topContainer.innerHTML = "";
-    const topMatchesList = result.topMatches;  // 已是前5个
-    
-    // 计算这5个专业中匹配分数的最大值和最小值
-    let minScore = Infinity, maxScore = -Infinity;
-    for (const m of topMatchesList) {
-      minScore = Math.min(minScore, m.score);
-      maxScore = Math.max(maxScore, m.score);
-    }
-    
-    topMatchesList.forEach((m, idx) => {
-      const originalPct = Math.round(m.score * 1000) / 10;   // 右侧显示的数字不变
-      let barWidthPct;
-      if (maxScore === minScore) {
-        barWidthPct = 75;   // 所有分数相等时，条形长度统一为75%
-      } else {
-        // 将最低分映射到50%，最高分映射到100%，中间线性插值
-        barWidthPct = 50 + (m.score - minScore) / (maxScore - minScore) * 50;
-      }
-      barWidthPct = Math.round(barWidthPct);   // 取整，用于 data-width
-    
+    result.topMatches.forEach((m, idx) => {
+      const pct = Math.round(m.score * 1000) / 10;
       const isPrimary = idx === 0 || (result.resultType === "cross" && idx === 1);
       const row = document.createElement("div");
       row.className = "flex items-center";
       row.innerHTML = `
         <span class="w-32 md:w-40 text-sm font-medium text-gray-700 truncate">${m.name}</span>
         <div class="flex-1 match-bar-bg mx-3">
-          <div class="match-bar-fill" style="width: 0%; opacity: ${isPrimary ? 1 : 0.6}" data-width="${barWidthPct}%"></div>
+          <div class="match-bar-fill" style="width: 0%; opacity: ${isPrimary ? 1 : 0.6}" data-width="${pct}%"></div>
         </div>
-        <span class="w-12 text-sm font-bold text-primary-600 text-right">${originalPct}%</span>`;
+        <span class="w-12 text-sm font-bold text-primary-600 text-right">${pct}%</span>`;
       topContainer.appendChild(row);
     });
     setTimeout(() => {
