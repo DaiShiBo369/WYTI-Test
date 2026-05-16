@@ -412,6 +412,12 @@
     // 推荐开启：通过 Supabase RPC 返回聚合计数，避免开放明细 select
     useCountRpc: true,
     countRpcName: "get_wyti_results_count",
+    // 历史平均分（雷达图）建议走 RPC，失败时回退到前端聚合
+    useAverageRpc: true,
+    averageRpcName: "get_wyti_average_scores",
+    // 生产建议：关闭前端回退聚合，避免实时计算开销与权限风险
+    disableAverageFallback: true,
+    averageFetchLimit: 500,
     customEndpoint: ""
   };
   const SHARE_IMAGE_CONFIG = {
@@ -591,6 +597,112 @@
     const total = Number(totalPart);
     if (!Number.isFinite(total)) return null;
     return total;
+  }
+
+  function extractAverageScoresFromPayload(payload) {
+    const row = Array.isArray(payload) ? payload[0] : payload;
+    if (!row || typeof row !== "object") return null;
+    const candidates = [
+      row,
+      row.avg_scores,
+      row.average_scores,
+      row.quantitative_scores,
+      row.normalized_scores
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const M = Number(candidate.M ?? candidate.m ?? candidate.avg_m ?? candidate.m_avg);
+      const D = Number(candidate.D ?? candidate.d ?? candidate.avg_d ?? candidate.d_avg);
+      const P = Number(candidate.P ?? candidate.p ?? candidate.avg_p ?? candidate.p_avg);
+      const S = Number(candidate.S ?? candidate.s ?? candidate.avg_s ?? candidate.s_avg);
+      const V = Number(candidate.V ?? candidate.v ?? candidate.avg_v ?? candidate.v_avg);
+      if ([M, D, P, S, V].every(Number.isFinite)) return { M, D, P, S, V };
+    }
+    return null;
+  }
+
+  async function fetchAverageScoresFromSupabase() {
+    const base = (RESULT_UPLOAD_CONFIG.supabaseUrl || "").replace(/\/+$/, "");
+    const key = RESULT_UPLOAD_CONFIG.supabaseAnonKey || "";
+    const table = RESULT_UPLOAD_CONFIG.tableName || "wyti_results";
+    if (!base || !key || RESULT_UPLOAD_CONFIG.provider !== "supabase") return null;
+
+    const headers = {
+      "apikey": key,
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json"
+    };
+
+    // 1) 优先 RPC 取聚合
+    const useAverageRpc = RESULT_UPLOAD_CONFIG.useAverageRpc !== false;
+    if (useAverageRpc) {
+      const rpcName = RESULT_UPLOAD_CONFIG.averageRpcName || "get_wyti_average_scores";
+      const rpcUrl = `${base}/rest/v1/rpc/${encodeURIComponent(rpcName)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers,
+          body: "{}",
+          signal: controller.signal
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          const avgFromRpc = extractAverageScoresFromPayload(data);
+          if (avgFromRpc) return avgFromRpc;
+        }
+      } catch (_) {
+        // ignore and fallback
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    if (RESULT_UPLOAD_CONFIG.disableAverageFallback) {
+      return null;
+    }
+
+    // 2) 回退：拉取最近记录在前端做平均
+    const limit = Math.max(50, Number(RESULT_UPLOAD_CONFIG.averageFetchLimit) || 500);
+    const tablePath = encodeURIComponent(table);
+    const fallbackUrl = `${base}/rest/v1/${tablePath}?select=normalized_scores,quantitative_scores&order=created_at_client.desc&limit=${limit}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    try {
+      const res = await fetch(fallbackUrl, {
+        method: "GET",
+        headers,
+        signal: controller.signal
+      });
+      if (!res.ok) return null;
+      const rows = await res.json().catch(() => []);
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      let sumM = 0, sumD = 0, sumP = 0, sumS = 0, sumV = 0, count = 0;
+      rows.forEach(row => {
+        const scoreObj = row?.normalized_scores || row?.quantitative_scores;
+        if (!scoreObj || typeof scoreObj !== "object") return;
+        const M = Number(scoreObj.M);
+        const D = Number(scoreObj.D);
+        const P = Number(scoreObj.P);
+        const S = Number(scoreObj.S);
+        const V = Number(scoreObj.V);
+        if (![M, D, P, S, V].every(Number.isFinite)) return;
+        sumM += M; sumD += D; sumP += P; sumS += S; sumV += V; count += 1;
+      });
+      if (!count) return null;
+      return {
+        M: sumM / count,
+        D: sumD / count,
+        P: sumP / count,
+        S: sumS / count,
+        V: sumV / count
+      };
+    } catch (_) {
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function refreshVisitorCounter(afterSaved) {
@@ -1195,7 +1307,7 @@
     ctx.textBaseline = "alphabetic";
   }
 
-  function drawShareRadarChart(ctx, dimensions, centerX, centerY, radius) {
+  function drawShareRadarChart(ctx, dimensions, centerX, centerY, radius, historicalDimensions) {
     if (!Array.isArray(dimensions) || dimensions.length === 0) return;
     const total = dimensions.length;
     const levels = 4;
@@ -1249,6 +1361,26 @@
     ctx.fill();
     ctx.stroke();
 
+    // Historical average polygon overlay
+    if (Array.isArray(historicalDimensions) && historicalDimensions.length === total) {
+      ctx.beginPath();
+      for (let i = 0; i < total; i++) {
+        const value = Number.isFinite(Number(historicalDimensions[i].value)) ? Number(historicalDimensions[i].value) : 0;
+        const ratio = Math.max(0, Math.min(1, value / 100));
+        const p = getPoint(i, ratio);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = "rgba(148, 163, 184, 0.16)";
+      ctx.strokeStyle = "#64748b";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     // Vertex dots
     for (let i = 0; i < total; i++) {
       const value = Number.isFinite(Number(dimensions[i].value)) ? Number(dimensions[i].value) : 0;
@@ -1269,6 +1401,27 @@
       const p = getPoint(i, 1.18);
       const label = dimensions[i].label || dimensions[i].key || "";
       ctx.fillText(label, p.x, p.y);
+    }
+
+    // Legend
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#0ea5e9";
+    ctx.fillRect(centerX - radius, centerY + radius + 28, 16, 4);
+    ctx.fillStyle = "#475569";
+    ctx.font = "500 16px Inter, 'Microsoft YaHei', sans-serif";
+    ctx.fillText("当前结果", centerX - radius + 24, centerY + radius + 30);
+    if (Array.isArray(historicalDimensions) && historicalDimensions.length === total) {
+      ctx.strokeStyle = "#64748b";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(centerX - radius + 130, centerY + radius + 30);
+      ctx.lineTo(centerX - radius + 152, centerY + radius + 30);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#475569";
+      ctx.fillText("历史均值", centerX - radius + 160, centerY + radius + 30);
     }
 
     ctx.restore();
@@ -1294,6 +1447,7 @@
     const secondaryBadgeImage = await loadImageSafe(secondaryBadgePath) || await loadImageSafe("images/badges/default.svg");
     const shareLandingUrl = normalizeShareTargetUrl(SHARE_IMAGE_CONFIG.qrTargetUrl);
     const qrImage = await loadShareQrImage(shareLandingUrl, 160);
+    const historicalAverageScores = await fetchAverageScoresFromSupabase();
 
     return new Promise((resolve, reject) => {
       try {
@@ -1325,11 +1479,22 @@
           })
           .sort((a, b) => b.value - a.value)
           .slice(0, 2);
+        const historicalMax = historicalAverageScores
+          ? Math.max(...dimOrder.map(key => Number(historicalAverageScores[key]) || 0), 0)
+          : 0;
+        const radarScaleMax = Math.max(maxScore, historicalMax, 1);
         const radarDims = dimOrder.map(key => ({
           key,
           label: SHARE_RADAR_SHORT_LABELS[key] || key,
-          value: Math.max(0, Math.min(100, Math.round(((Number(result.scores[key]) || 0) / maxScore) * 100)))
+          value: Math.max(0, Math.min(100, Math.round(((Number(result.scores[key]) || 0) / radarScaleMax) * 100)))
         }));
+        const historicalRadarDims = historicalAverageScores
+          ? dimOrder.map(key => ({
+            key,
+            label: SHARE_RADAR_SHORT_LABELS[key] || key,
+            value: Math.max(0, Math.min(100, Math.round(((Number(historicalAverageScores[key]) || 0) / radarScaleMax) * 100)))
+          }))
+          : null;
 
         ctx.fillStyle = "#0f172a";
         ctx.font = "bold 54px Inter, sans-serif";
@@ -1346,23 +1511,29 @@
         const badgeX = 560;
         const badgeY = 240;
         if (result.resultType === "cross") {
+          const crossBadgeSize = 124;
+          const leftX = badgeX + 26;
+          const leftY = badgeY + 24;
+          const rightX = badgeX + 86;
+          const rightY = badgeY + 58;
+
           ctx.save();
-          ctx.translate(badgeX + 20, badgeY + 10);
-          ctx.rotate(-0.08);
+          ctx.translate(leftX + crossBadgeSize / 2, leftY + crossBadgeSize / 2);
+          ctx.rotate(-0.1);
           if (primaryBadgeImage) {
-            drawRoundedImage(ctx, primaryBadgeImage, -10, 0, badgeSize - 20, 18);
+            drawRoundedImage(ctx, primaryBadgeImage, -crossBadgeSize / 2, -crossBadgeSize / 2, crossBadgeSize, 18);
           } else {
-            drawBadgeFallback(ctx, result.matchedDepts[0] || "交", -10, 0, badgeSize - 20);
+            drawBadgeFallback(ctx, result.matchedDepts[0] || "交", -crossBadgeSize / 2, -crossBadgeSize / 2, crossBadgeSize);
           }
           ctx.restore();
 
           ctx.save();
-          ctx.translate(badgeX + 90, badgeY + 40);
-          ctx.rotate(0.08);
+          ctx.translate(rightX + crossBadgeSize / 2, rightY + crossBadgeSize / 2);
+          ctx.rotate(0.1);
           if (secondaryBadgeImage) {
-            drawRoundedImage(ctx, secondaryBadgeImage, 0, 0, badgeSize - 20, 18);
+            drawRoundedImage(ctx, secondaryBadgeImage, -crossBadgeSize / 2, -crossBadgeSize / 2, crossBadgeSize, 18);
           } else {
-            drawBadgeFallback(ctx, result.matchedDepts[1] || "叉", 0, 0, badgeSize - 20);
+            drawBadgeFallback(ctx, result.matchedDepts[1] || "叉", -crossBadgeSize / 2, -crossBadgeSize / 2, crossBadgeSize);
           }
           ctx.restore();
         } else if (primaryBadgeImage) {
@@ -1378,7 +1549,7 @@
         ctx.fillStyle = "#0ea5e9";
         ctx.font = "bold 34px Inter, sans-serif";
         ctx.fillText("Top 能力标签", 140, 650);
-        drawShareRadarChart(ctx, radarDims, 740, 750, 150);
+        drawShareRadarChart(ctx, radarDims, 740, 750, 150, historicalRadarDims);
 
         topDims.forEach((dim, idx) => {
           const y = 730 + idx * 100;
@@ -1400,8 +1571,8 @@
           drawRoundedImage(ctx, mascotImage, 560, 1000, 200, 24);
         } else {
           const mx = 560;
-          const my = 1000;
-          const size = 200;
+          const my = 1080;
+          const size = 160;
           const mGrad = ctx.createLinearGradient(mx, my, mx + size, my + size);
           mGrad.addColorStop(0, "#e0f2fe");
           mGrad.addColorStop(1, "#bae6fd");
