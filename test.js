@@ -1779,7 +1779,7 @@
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           title: "WYTI 专业支线任务卡",
-          text: `我的支线任务是：${lastResultData.resultName}`,
+          text: `我的测试结果（仅供参考）：${lastResultData.resultName}`,
           files: [file]
         });
         shareCompleted = true;
@@ -1855,7 +1855,7 @@
 
   window.shareResults = function() {
     if (!lastResultData) return;
-    const text = `我在WYTI专业选择测试中获得了推荐：${lastResultData.resultName}！快来看看你适合什么专业吧~`;
+    const text = `我在WYTI专业选择测试中的结果是：${lastResultData.resultName}（仅供参考）。快来看看你适合什么方向吧~`;
     if (navigator.share) {
       navigator.share({ title: "WYTI专业选择测试", text: text, url: window.location.href });
     } else {
