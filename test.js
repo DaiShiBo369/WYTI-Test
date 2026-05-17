@@ -1162,7 +1162,8 @@
     }
     
     topMatchesList.forEach((m, idx) => {
-      const originalPct = Math.round(m.score * 1000) / 10;   // 右侧显示的数字不变
+      const originalPct = Math.round(m.score * 1000) / 10;
+      const safeDisplayPct = Math.max(0, Math.min(100, originalPct));
       let barWidthPct;
       if (maxMatchScore === minMatchScore) {
         barWidthPct = 75;   // 所有分数相等时，条形长度统一为75%
@@ -1170,7 +1171,7 @@
         // 将最低分映射到50%，最高分映射到100%，中间线性插值
         barWidthPct = 50 + (m.score - minMatchScore) / (maxMatchScore - minMatchScore) * 50;
       }
-      barWidthPct = Math.round(barWidthPct);   // 取整，用于 data-width
+      barWidthPct = Math.max(0, Math.min(100, Math.round(barWidthPct)));
     
       const isPrimary = idx === 0 || (result.resultType === "cross" && idx === 1);
       const row = document.createElement("div");
@@ -1180,7 +1181,7 @@
         <div class="flex-1 match-bar-bg mx-3">
           <div class="match-bar-fill" style="width: 0%; opacity: ${isPrimary ? 1 : 0.6}" data-width="${barWidthPct}%"></div>
         </div>
-        <span class="w-12 text-sm font-bold text-primary-600 text-right">${originalPct}%</span>`;
+        <span class="w-12 text-sm font-bold text-primary-600 text-right">${safeDisplayPct}%</span>`;
       topContainer.appendChild(row);
     });
     setTimeout(() => {
